@@ -50,6 +50,14 @@ export const processTx = async (txHash: string, transfers: Transfer[]): Promise<
       purchaseTypes,
       orderIds,
     });
+    // A rebuild replaces this device's lines for the transaction. If an eSIM wallet was registered
+    // after its purchase was first seen, the purchase line now takes the place of the plain sends.
+    // A call without transfers (the price cap webhook) only knows events, so it leaves transfer lines.
+    await Activity.deleteMany({
+      deviceWalletAddress: device,
+      txHash: txHash.toLowerCase(),
+      key: transfers.length > 0 ? { $nin: lines.map((l) => l.key) } : { $nin: lines.map((l) => l.key), $regex: ':event:' },
+    });
     if (lines.length === 0) continue;
     await Activity.bulkWrite(lines.map(upsertLine), { ordered: false });
     await pruneHistory(device);
