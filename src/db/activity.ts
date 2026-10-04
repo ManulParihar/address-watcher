@@ -1,43 +1,53 @@
 import mongoose, { Schema } from 'mongoose';
 
-/** One stored transfer that touched a watched wallet. */
-export interface ActivityRow {
-  /** `<txHash>:log:<logIndex>` for ERC-20, `<txHash>:native:<from>:<to>:<amount>` for ETH. */
+export type ActivityType = 'PURCHASE' | 'TOPUP' | 'SEND' | 'RECEIVE' | 'MOVE' | 'PRICE_CAP';
+
+/** One line of a device wallet's history. Only the newest HISTORY_LIMIT per device are kept. */
+export interface ActivityDoc {
+  /** `<deviceWalletAddress>:<line id>`. The line id is the transfer id, or the event's log position. */
   key: string;
-  chainId: number;
+  deviceWalletAddress: string;
+  type: ActivityType;
   txHash: string;
   blockNumber: number;
-  blockTime: Date;
-  from: string;
-  to: string;
-  /** Token contract, null for ETH. */
+  time: Date;
+  from: string | null;
+  to: string | null;
+  /** Token contract, null for ETH and for price cap changes. */
   token: string | null;
   symbol: string | null;
   decimals: number | null;
-  /** Base units, as a string so large values keep their precision. */
-  amount: string;
-  source: 'WEBHOOK' | 'BACKFILL';
+  /** Base units. Null for price cap changes. */
+  amount: string | null;
+  /** The eSIM wallet a purchase, top-up or cap change belongs to. */
+  eSIMWallet: string | null;
+  /** Kokio-BFF order id, for purchases and top-ups. */
+  orderId: string | null;
+  /** New cap in USD cents. Zero means the wallet follows the Kokio default. */
+  priceCapUSDCents: number | null;
 }
 
-const WalletActivitySchema = new Schema<ActivityRow>(
+const ActivitySchema = new Schema<ActivityDoc>(
   {
     key: { type: String, required: true, unique: true },
-    chainId: { type: Number, required: true },
-    txHash: { type: String, required: true },
+    deviceWalletAddress: { type: String, required: true, lowercase: true },
+    type: { type: String, enum: ['PURCHASE', 'TOPUP', 'SEND', 'RECEIVE', 'MOVE', 'PRICE_CAP'], required: true },
+    txHash: { type: String, required: true, index: true },
     blockNumber: { type: Number, required: true },
-    blockTime: { type: Date, required: true },
-    from: { type: String, required: true, lowercase: true },
-    to: { type: String, required: true, lowercase: true },
-    token: { type: String, default: null, lowercase: true },
+    time: { type: Date, required: true },
+    from: { type: String, default: null },
+    to: { type: String, default: null },
+    token: { type: String, default: null },
     symbol: { type: String, default: null },
     decimals: { type: Number, default: null },
-    amount: { type: String, required: true },
-    source: { type: String, enum: ['WEBHOOK', 'BACKFILL'], required: true },
+    amount: { type: String, default: null },
+    eSIMWallet: { type: String, default: null },
+    orderId: { type: String, default: null },
+    priceCapUSDCents: { type: Number, default: null },
   },
   { timestamps: true },
 );
-// The history query reads by wallet, newest first, paging on (blockNumber, txHash)
-WalletActivitySchema.index({ from: 1, blockNumber: -1, txHash: -1 });
-WalletActivitySchema.index({ to: 1, blockNumber: -1, txHash: -1 });
+// Read and prune both walk one device's lines newest first
+ActivitySchema.index({ deviceWalletAddress: 1, blockNumber: -1, key: -1 });
 
-export const WalletActivity = mongoose.model<ActivityRow>('WalletActivity', WalletActivitySchema);
+export const Activity = mongoose.model<ActivityDoc>('Activity', ActivitySchema);

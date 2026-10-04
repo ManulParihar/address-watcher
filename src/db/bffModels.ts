@@ -1,22 +1,15 @@
 // Read-only views of collections Kokio-BFF owns. Only the fields this service reads are declared,
 // and the collection names are pinned to what the BFF's mongoose models create.
-import mongoose, { Schema, type Types } from 'mongoose';
+import mongoose, { Schema } from 'mongoose';
 
-interface PaymentTransactionView {
-  orderId: Types.ObjectId;
-  status: 'PENDING' | 'SUCCESS' | 'FAILED';
-  transactionHash: string | null;
-  /** Base units of the token actually spent. */
-  tokenAmount: string | null;
+interface OrderView {
+  purchaseType?: 'SIM' | 'TOPUP' | 'SIM_OR_TOPUP';
 }
 
-export const PaymentTransaction = mongoose.model<PaymentTransactionView>(
-  'PaymentTransactionView',
-  new Schema<PaymentTransactionView>(
-    { orderId: Schema.Types.ObjectId, status: String, transactionHash: String, tokenAmount: String },
-    { strict: false },
-  ),
-  'paymenttransactions',
+export const Order = mongoose.model<OrderView>(
+  'OrderView',
+  new Schema<OrderView>({ purchaseType: String }, { strict: false }),
+  'orders',
 );
 
 interface AccountView {
