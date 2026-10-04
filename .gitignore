@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+
+# Secrets. Only the sample is tracked.
+.env
+.env.*
+!.env.sample
+
+.DS_Store
