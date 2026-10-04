@@ -1,34 +1,35 @@
 import { CHAINS, getConfig } from '../config.js';
-import { WalletActivity } from '../db/walletActivity.js';
-import { activityToRow, upsertOp, type AddressActivity } from '../alchemy/rows.js';
 import { verifySignature } from '../alchemy/signature.js';
+import { fromAddressActivity, type AddressActivity, type Transfer } from '../alchemy/transfers.js';
+import { processTx, removeTx } from '../activity/ingest.js';
 
 interface AddressActivityPayload {
-  webhookId: string;
-  id: string;
-  createdAt: string;
   type: string;
   event?: { network?: string; activity?: AddressActivity[] };
 }
 
 /**
- * Stores one Address Activity delivery. Throws SignatureError on a bad signature (answer 401),
- * anything else on a failed write (answer 500 so Alchemy retries). Every write is idempotent.
+ * Handles one Address Activity delivery. Throws SignatureError on a bad signature (answer 401),
+ * anything else when processing fails (answer 500 so Alchemy retries). Processing is idempotent.
  */
 export const handleAddressActivity = async (rawBody: Buffer, signature: string | undefined): Promise<void> => {
   const { signingKey, chainId } = getConfig();
   verifySignature(rawBody, signature, signingKey);
   const payload = JSON.parse(rawBody.toString('utf8')) as AddressActivityPayload;
-  // A staging webhook pointed at production must not write rows
+  // A staging webhook pointed at production must not write lines
   if (payload.type !== 'ADDRESS_ACTIVITY' || payload.event?.network !== CHAINS[chainId].network) return;
 
-  // The payload carries no block timestamp. createdAt is when Alchemy saw the block.
-  const blockTime = new Date(payload.createdAt);
-  const ops = [];
+  const byTx = new Map<string, Transfer[]>();
+  const reorged = new Set<string>();
   for (const activity of payload.event.activity ?? []) {
-    const row = activityToRow(activity, chainId, blockTime);
-    if (!row) continue;
-    ops.push(activity.log?.removed ? { deleteOne: { filter: { key: row.key } } } : upsertOp(row));
+    if (activity.log?.removed) {
+      reorged.add(activity.hash.toLowerCase());
+      continue;
+    }
+    const transfer = fromAddressActivity(activity);
+    if (transfer) byTx.set(transfer.txHash, [...(byTx.get(transfer.txHash) ?? []), transfer]);
   }
-  if (ops.length > 0) await WalletActivity.bulkWrite(ops, { ordered: false });
+
+  for (const txHash of reorged) await removeTx(txHash);
+  for (const [txHash, transfers] of byTx) await processTx(txHash, transfers);
 };

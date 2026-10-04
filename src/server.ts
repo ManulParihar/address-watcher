@@ -4,12 +4,12 @@ import mongoose from 'mongoose';
 import { getConfig } from './config.js';
 import { SignatureError } from './alchemy/signature.js';
 import { handleAddressActivity } from './webhook/addressActivity.js';
+import { handleProtocolEvents } from './webhook/protocolEvents.js';
 import { repairGap, runWatchlistSync, unwatchAccount, watchWallet } from './watchlist/sync.js';
-import { getWalletActivity, InvalidCursorError } from './activity/query.js';
+import { getWalletActivity } from './activity/query.js';
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
-const BLOCK = /^0x[0-9a-fA-F]+$/;
-const MAX_LIMIT = 100;
+const BLOCK = /^(0x[0-9a-fA-F]+|\d+)$/;
 
 // Every route except the webhook is for Kokio-BFF only, which sends the shared token.
 const requireInternalToken = (req: Request, res: Response, next: NextFunction) => {
@@ -31,20 +31,23 @@ export const createApp = () => {
     res.json({ ok: mongoose.connection.readyState === 1 });
   });
 
-  // The signature covers the exact bytes Alchemy sent, so this route takes the raw body
-  app.post('/webhooks/address-activity', express.raw({ type: 'application/json' }), async (req, res) => {
-    try {
-      await handleAddressActivity(req.body as Buffer, req.get('x-alchemy-signature'));
-      res.status(200).json({ received: true });
-    } catch (err) {
-      if (err instanceof SignatureError) {
-        res.status(401).end();
-        return;
+  // The signature covers the exact bytes Alchemy sent, so webhook routes take the raw body
+  const webhook =
+    (handle: (body: Buffer, signature: string | undefined) => Promise<void>) => async (req: Request, res: Response) => {
+      try {
+        await handle(req.body as Buffer, req.get('x-alchemy-signature'));
+        res.status(200).json({ received: true });
+      } catch (err) {
+        if (err instanceof SignatureError) {
+          res.status(401).end();
+          return;
+        }
+        console.error(`${req.path} failed`, err);
+        res.status(500).end();
       }
-      console.error('address activity write failed', err);
-      res.status(500).end();
-    }
-  });
+    };
+  app.post('/webhooks/address-activity', express.raw({ type: 'application/json' }), webhook(handleAddressActivity));
+  app.post('/webhooks/protocol-events', express.raw({ type: 'application/json' }), webhook(handleProtocolEvents));
 
   const internal = express.Router();
   internal.use(requireInternalToken, express.json());
@@ -65,22 +68,14 @@ export const createApp = () => {
 
   internal.get('/activity/:deviceWalletAddress', async (req, res) => {
     if (!ADDRESS.test(req.params.deviceWalletAddress)) return badRequest(res, 'invalid address');
-    const limit = req.query.limit === undefined ? 30 : Number(req.query.limit);
-    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) return badRequest(res, `limit must be 1 to ${MAX_LIMIT}`);
-    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
-    try {
-      res.json(await getWalletActivity(req.params.deviceWalletAddress, cursor, limit));
-    } catch (err) {
-      if (err instanceof InvalidCursorError) return badRequest(res, err.message);
-      throw err;
-    }
+    res.json({ items: await getWalletActivity(req.params.deviceWalletAddress) });
   });
 
   // Runs in the background: one backfill per watched wallet can take a while
   internal.post('/repair', (req, res) => {
-    const { fromBlock, toBlock } = req.body ?? {};
-    if (!BLOCK.test(fromBlock) || !BLOCK.test(toBlock)) return badRequest(res, 'fromBlock and toBlock must be hex');
-    repairGap(fromBlock, toBlock).catch((err) => console.error('repair failed', err));
+    const { fromBlock } = req.body ?? {};
+    if (typeof fromBlock !== 'string' || !BLOCK.test(fromBlock)) return badRequest(res, 'fromBlock must be a block number');
+    repairGap(BigInt(fromBlock)).catch((err) => console.error('repair failed', err));
     res.status(202).end();
   });
 
