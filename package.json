@@ -11,6 +11,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
+    "dev": "tsc -p tsconfig.build.json && node --env-file=.env dist/server.js",
+    "create-webhooks": "node --env-file=.env scripts/create-webhooks.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

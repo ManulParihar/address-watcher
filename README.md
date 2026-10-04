@@ -26,9 +26,18 @@ Needs Node 24 and the MongoDB that Kokio-BFF uses. The service reads the BFF's `
 ```bash
 npm install
 cp .env.sample .env    # fill in the values
-npm run build
-npm start
+npm run dev            # builds, then starts with .env loaded
 ```
+
+`npm start` runs the build without loading `.env`, for hosts that set the environment themselves.
+
+Locally, Alchemy needs a public URL to reach the webhooks. Start a tunnel with `ngrok http 3000`, then create both webhooks against it:
+
+```bash
+npm run create-webhooks -- https://your-subdomain.ngrok-free.dev
+```
+
+It prints `ALCHEMY_ACTIVITY_WEBHOOK_ID`, `ALCHEMY_ACTIVITY_SIGNING_KEY` and `ALCHEMY_EVENTS_SIGNING_KEY` for `.env`. It needs `ALCHEMY_NOTIFY_AUTH_TOKEN` in `.env` first.
 
 `npm test` runs the unit tests and `npm run typecheck` checks types. Neither needs a database.
 
